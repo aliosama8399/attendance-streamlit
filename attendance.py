@@ -296,7 +296,7 @@ def main():
                             save_training_data(embeddings, names)  # Save data for future reloads
                             st.success(f"Processed {len(names)} faces from the training folder!")
                             st.session_state.current_tab = "Take Attendance"
-                            st.experimental_rerun()
+                            st.rerun()
                         else:
                             st.error("No valid images found in the folder.")
                 else:
@@ -320,7 +320,7 @@ def main():
                     save_training_data(embeddings, names)
                     st.success(f"Processed {len(names)} faces from the uploaded images!")
                     st.session_state.current_tab = "Take Attendance"
-                    st.experimental_rerun()
+                    st.rerun()
         else:
             st.subheader("Training Data Already Loaded")
             st.write(f"Total trained students: {len(st.session_state.known_face_names)}")
@@ -365,7 +365,7 @@ def main():
                     st.session_state.attendance_processed = True
                     st.success(f"Processed {len(recognized_data)} faces!")
                     st.session_state.current_tab = "Results"
-                    st.experimental_rerun()
+                    st.rerun()
             
             if st.session_state.recognized_faces:
                 import pandas as pd
@@ -413,7 +413,7 @@ def main():
                 for i, new_name in updated_names.items():
                     st.session_state.recognized_faces[i]["name"] = new_name
                 st.success("Attendance sheet updated successfully!")
-                st.experimental_rerun()
+                st.rerun()
             
             st.markdown("### Add New Entry")
             new_entry_name = st.text_input("New Student Name", key="new_entry")
@@ -425,7 +425,7 @@ def main():
                         "image_name": "Manual Entry"
                     })
                     st.success(f"Added new entry: {new_entry_name}")
-                    st.experimental_rerun()
+                    st.rerun()
             
             if st.button("Export to CSV"):
                 course = st.session_state.get("course_name", "Course")
