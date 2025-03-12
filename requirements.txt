@@ -4,4 +4,4 @@ insightface
 cmake
 onnx
 onnxruntime
-opencv-python
+opencv-python-headless
