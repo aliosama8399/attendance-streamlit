@@ -23,24 +23,11 @@ logging.getLogger('insightface').setLevel(logging.ERROR)
 # Custom CSS for styling
 st.markdown("""
     <style>
-    .main {
-        background-color: black;
-    }
-    .stButton button {
-        background-color: #0066cc;
-        color: white;
-    }
-    .stButton button:hover {
-        background-color: #004d99;
-        color: white;
-    }
-    h1, h2, h3 {
-        color: #0066cc;
-    }
-    .stRadio label {
-        margin-right: 20px;
-        font-weight: bold;
-    }
+    .main { background-color: black; }
+    .stButton button { background-color: #0066cc; color: white; }
+    .stButton button:hover { background-color: #004d99; color: white; }
+    h1, h2, h3 { color: #0066cc; }
+    .stRadio label { margin-right: 20px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -75,13 +62,14 @@ def normalize_embedding(embedding):
     norm = np.linalg.norm(embedding)
     return embedding / norm if norm != 0 else embedding
 
-# Save and load training data to/from disk so training happens only once.
-def save_training_data(embeddings, names, filename="training_data.pkl"):
+# Save training data (embeddings and names) to disk as a pickle file
+def save_training_data(embeddings, names, filename):
     data = {"embeddings": embeddings, "names": names}
     with open(filename, "wb") as f:
         pickle.dump(data, f)
 
-def load_training_data_from_disk(filename="training_data.pkl"):
+# Load training data from disk (from a pickle file)
+def load_training_data_from_disk(filename):
     if os.path.exists(filename):
         with open(filename, "rb") as f:
             data = pickle.load(f)
@@ -100,58 +88,22 @@ def initialize_session_state():
         st.session_state.training_complete = False
     if 'attendance_processed' not in st.session_state:
         st.session_state.attendance_processed = False
-    if 'training_folder' not in st.session_state:
-        st.session_state.training_folder = ""
+    if 'training_set_name' not in st.session_state:
+        st.session_state.training_set_name = ""
     if 'current_tab' not in st.session_state:
         st.session_state.current_tab = "Training"
 
 # --------------------------
-# CACHED FUNCTION TO LOAD TRAINING DATA FROM A FOLDER
+# CACHED FUNCTION TO LOAD TRAINING DATA FROM Uploaded Files
 @st.cache_data(show_spinner=False)
-def get_training_data(folder_path):
+def get_training_data_from_uploads(uploaded_files):
     face_analysis_app = load_face_analysis()
     known_face_embeddings = []
     known_face_names = []
-    
-    image_extensions = ['*.jpg', '*.jpeg', '*.png']
-    image_files = []
-    for ext in image_extensions:
-        image_files.extend(glob.glob(os.path.join(folder_path, ext)))
-    
-    for image_path in image_files:
-        img = cv2.imread(image_path)
-        if img is not None:
-            faces = face_analysis_app.get(img)
-            if faces:
-                for face in faces:
-                    if face.embedding is not None:
-                        normalized_embedding = normalize_embedding(face.embedding)
-                        known_face_embeddings.append(normalized_embedding)
-                        name = os.path.splitext(os.path.basename(image_path))[0]
-                        known_face_names.append(name)
-    success = True if known_face_embeddings else False
-    return known_face_embeddings, known_face_names, success
-
-# Optionally, allow uploading training images individually.
-def load_training_images_from_uploads(uploaded_files):
-    face_analysis_app = load_face_analysis()
-    known_face_embeddings = []
-    known_face_names = []
-    
-    loading_placeholder = display_loading_screen("Processing uploaded training images...")
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i, uploaded_file in enumerate(uploaded_files):
-        progress_bar.progress(int((i + 1) / len(uploaded_files) * 100))
-        status_text.text(f"Processing image {i+1}/{len(uploaded_files)}: {uploaded_file.name}")
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
-            tmp_file.write(uploaded_file.getbuffer())
-            tmp_path = tmp_file.name
-        
-        img = cv2.imread(tmp_path)
+    # Process each uploaded file
+    for uploaded_file in uploaded_files:
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, 1)
         if img is not None:
             faces = face_analysis_app.get(img)
             if faces:
@@ -161,40 +113,33 @@ def load_training_images_from_uploads(uploaded_files):
                         known_face_embeddings.append(normalized_embedding)
                         name = os.path.splitext(uploaded_file.name)[0]
                         known_face_names.append(name)
-        
-        os.unlink(tmp_path)
-    
-    progress_bar.empty()
-    status_text.empty()
-    loading_placeholder.empty()
-    
-    return known_face_embeddings, known_face_names
+    success = True if known_face_embeddings else False
+    return known_face_embeddings, known_face_names, success
 
-# Recognize faces in attendance images
+# Optionally, allow uploading training images individually (alternative method)
+def load_training_images_from_uploads(uploaded_files):
+    # This function is similar to get_training_data_from_uploads but without caching
+    return get_training_data_from_uploads(uploaded_files)
+
+# Recognize faces in the provided attendance images
 def recognize_faces(uploaded_files, known_face_embeddings, known_face_names):
     face_analysis_app = load_face_analysis()
     recognized_data = []
-    
     loading_placeholder = display_loading_screen("Analyzing images for attendance...")
-    
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
     for i, uploaded_file in enumerate(uploaded_files):
         progress_bar.progress(int((i + 1) / len(uploaded_files) * 100))
         status_text.text(f"Analyzing image {i+1}/{len(uploaded_files)}: {uploaded_file.name}")
-        
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
             tmp_file.write(uploaded_file.getbuffer())
             tmp_path = tmp_file.name
-        
         img = cv2.imread(tmp_path)
         if img is not None:
             faces = face_analysis_app.get(img)
             for face in faces:
                 if face.embedding is None:
                     continue
-                
                 embedding = normalize_embedding(face.embedding)
                 name = "Unknown"
                 min_dist = float("inf")
@@ -203,36 +148,25 @@ def recognize_faces(uploaded_files, known_face_embeddings, known_face_names):
                     if dist < min_dist:
                         min_dist = dist
                         name = known_name if dist < 1.2 else "Unknown"
-                
-                face_data = {
-                    "name": name,
-                    "embedding": embedding,
-                    "image_name": uploaded_file.name
-                }
+                face_data = {"name": name, "embedding": embedding, "image_name": uploaded_file.name}
                 recognized_data.append(face_data)
-        
         os.unlink(tmp_path)
-    
     progress_bar.empty()
     status_text.empty()
     loading_placeholder.empty()
-    
     return recognized_data
 
-# Save attendance CSV
+# Save recognized names to CSV for export
 def save_recognized_names_to_csv(recognized_names, course_name, hall):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_filename = f"{course_name}_{hall}_{timestamp}.csv"
-    
     with tempfile.NamedTemporaryFile(mode='w', delete=False, newline='', suffix='.csv') as tmp_file:
         csv_writer = csv.writer(tmp_file)
         csv_writer.writerow(["Student Name", "Course", "Hall", "Timestamp"])
         for name in recognized_names:
             csv_writer.writerow([name, course_name, hall, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-    
     with open(tmp_file.name, 'r') as f:
         csv_data = f.read()
-    
     return csv_data, csv_filename
 
 # --------------------------
@@ -240,14 +174,10 @@ def save_recognized_names_to_csv(recognized_names, course_name, hall):
 def main():
     initialize_session_state()
     
-    # Try loading training data from disk if not already trained in session.
-    if not st.session_state.training_complete:
-        embeddings, names = load_training_data_from_disk()
-        if embeddings is not None and names is not None:
-            st.session_state.known_face_embeddings = embeddings
-            st.session_state.known_face_names = names
-            st.session_state.training_complete = True
-            st.success("Loaded training data from disk!")
+    # Create directory for training sets if it doesn't exist.
+    training_sets_dir = "training_sets"
+    if not os.path.exists(training_sets_dir):
+        os.makedirs(training_sets_dir)
     
     # Header with logo and title
     col1, col2 = st.columns([1, 5])
@@ -267,62 +197,62 @@ def main():
     
     # ----------------- Training Tab -----------------
     if st.session_state.current_tab == "Training":
-        st.header("Train the Recognition System")
+        st.header("Manage Training Sets")
+        st.write("Either create a new training set by uploading training images or load an existing one.")
+        mode = st.radio("Select Option", ["New Training Set", "Load Existing Training Set"])
         
-        # Only ask for training folder if not already trained
-        if not st.session_state.training_complete:
-            training_folder = st.text_input(
-                "Enter the Training Images Folder Path", 
-                value=st.session_state.training_folder,
-                help="Provide the full path to the folder containing training images. Each image filename should be the student's name."
-            )
-            if training_folder != st.session_state.training_folder:
-                st.session_state.training_folder = training_folder
-                st.session_state.training_complete = False
-            
-            if training_folder:
-                if os.path.exists(training_folder):
-                    image_files_count = len(glob.glob(os.path.join(training_folder, "*.jpg"))) + \
-                                        len(glob.glob(os.path.join(training_folder, "*.jpeg"))) + \
-                                        len(glob.glob(os.path.join(training_folder, "*.png")))
-                    st.info(f"Found {image_files_count} images in the folder.")
-                    
-                    with st.spinner("Loading training images from folder..."):
-                        embeddings, names, success = get_training_data(training_folder)
-                        if success:
-                            st.session_state.known_face_embeddings = embeddings
-                            st.session_state.known_face_names = names
-                            st.session_state.training_complete = True
-                            save_training_data(embeddings, names)  # Save data for future reloads
-                            st.success(f"Processed {len(names)} faces from the training folder!")
-                            st.session_state.current_tab = "Take Attendance"
-                            st.rerun()
-                        else:
-                            st.error("No valid images found in the folder.")
-                else:
-                    st.warning(f"Folder does not exist: {training_folder}")
-            
-            st.divider()
-            
-            st.subheader("Or Upload Training Images Individually")
+        if mode == "New Training Set":
+            # Instead of a folder path, let the user upload multiple training images.
             uploaded_training_files = st.file_uploader(
                 "Upload training images (JPG, JPEG, PNG)", 
                 type=["jpg", "jpeg", "png"], 
                 accept_multiple_files=True,
-                key="training_upload"
+                key="new_training_upload"
             )
-            if uploaded_training_files:
-                with st.spinner("Processing uploaded training images..."):
-                    embeddings, names = load_training_images_from_uploads(uploaded_training_files)
-                    st.session_state.known_face_embeddings = embeddings
-                    st.session_state.known_face_names = names
-                    st.session_state.training_complete = True
-                    save_training_data(embeddings, names)
-                    st.success(f"Processed {len(names)} faces from the uploaded images!")
-                    st.session_state.current_tab = "Take Attendance"
-                    st.rerun()
-        else:
-            st.subheader("Training Data Already Loaded")
+            training_set_name = st.text_input("Enter Training Set Name (e.g., AI_first_year)", value=st.session_state.training_set_name)
+            if st.button("Process New Training Set"):
+                if uploaded_training_files and training_set_name:
+                    with st.spinner("Processing training images..."):
+                        embeddings, names, success = get_training_data_from_uploads(uploaded_training_files)
+                        if success:
+                            st.session_state.known_face_embeddings = embeddings
+                            st.session_state.known_face_names = names
+                            st.session_state.training_complete = True
+                            st.session_state.training_set_name = training_set_name
+                            # Save the training data as a pickle file
+                            pkl_filename = os.path.join(training_sets_dir, f"{training_set_name}.pkl")
+                            save_training_data(embeddings, names, pkl_filename)
+                            st.success(f"Training set '{training_set_name}' processed and saved!")
+                            st.session_state.current_tab = "Take Attendance"
+                            st.experimental_rerun()
+                        else:
+                            st.error("No valid images found in the uploads.")
+                else:
+                    st.error("Please upload training images and provide a training set name.")
+        
+        elif mode == "Load Existing Training Set":
+            available_sets = [os.path.splitext(f)[0] for f in os.listdir(training_sets_dir) if f.endswith('.pkl')]
+            if available_sets:
+                selected_set = st.selectbox("Select Training Set", available_sets)
+                if st.button("Load Selected Training Set"):
+                    pkl_filename = os.path.join(training_sets_dir, f"{selected_set}.pkl")
+                    embeddings, names = load_training_data_from_disk(pkl_filename)
+                    if embeddings is not None and names is not None:
+                        st.session_state.known_face_embeddings = embeddings
+                        st.session_state.known_face_names = names
+                        st.session_state.training_complete = True
+                        st.session_state.training_set_name = selected_set
+                        st.success(f"Loaded training set '{selected_set}'!")
+                        st.session_state.current_tab = "Take Attendance"
+                        st.experimental_rerun()
+                    else:
+                        st.error("Failed to load training set.")
+            else:
+                st.info("No existing training sets available. Please create a new training set.")
+        
+        if st.session_state.training_complete:
+            st.subheader("Training Results")
+            st.write(f"Training Set: {st.session_state.training_set_name}")
             st.write(f"Total trained students: {len(st.session_state.known_face_names)}")
             import pandas as pd
             unique_names = pd.DataFrame({"Student Name": list(set(st.session_state.known_face_names))})
@@ -331,9 +261,8 @@ def main():
     # ----------------- Attendance Tab -----------------
     elif st.session_state.current_tab == "Take Attendance":
         st.header("Take Attendance")
-        
         if not st.session_state.training_complete:
-            st.warning("Please train the system with student images first (go to Training tab)")
+            st.warning("Please load a training set first (go to Training tab)")
         else:
             st.write("Upload class images to mark attendance.")
             uploaded_attendance_files = st.file_uploader(
@@ -342,18 +271,15 @@ def main():
                 accept_multiple_files=True,
                 key="attendance_files"
             )
-            
             col1, col2 = st.columns(2)
             with col1:
                 course_name = st.text_input("Course Name")
             with col2:
                 hall = st.text_input("Hall/Location")
-            
             if course_name:
                 st.session_state.course_name = course_name
             if hall:
                 st.session_state.hall = hall
-            
             if uploaded_attendance_files and course_name and hall and not st.session_state.attendance_processed:
                 with st.spinner("Processing attendance images..."):
                     recognized_data = recognize_faces(
@@ -365,8 +291,7 @@ def main():
                     st.session_state.attendance_processed = True
                     st.success(f"Processed {len(recognized_data)} faces!")
                     st.session_state.current_tab = "Results"
-                    st.rerun()
-            
+                    st.experimental_rerun()
             if st.session_state.recognized_faces:
                 import pandas as pd
                 attendance_data = []
@@ -383,13 +308,11 @@ def main():
     # ----------------- Results Tab -----------------
     elif st.session_state.current_tab == "Results":
         st.header("Attendance Results")
-        
         if not st.session_state.recognized_faces:
             st.info("No attendance data available. Please take attendance first.")
         else:
             st.subheader("Attendance Summary")
             recognized_names = [face["name"] for face in st.session_state.recognized_faces]
-            
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Students", len(set(recognized_names)))
@@ -398,7 +321,6 @@ def main():
             with col3:
                 unknown_count = len([name for name in recognized_names if name == "Unknown"])
                 st.metric("Unrecognized Faces", unknown_count)
-            
             st.markdown("### Edit Attendance Sheet")
             updated_names = {}
             for i, face in enumerate(st.session_state.recognized_faces):
@@ -408,13 +330,11 @@ def main():
                 with col2:
                     new_name = st.text_input("Name", value=face["name"], key=f"edit_rec_{i}")
                     updated_names[i] = new_name
-            
             if st.button("Save Changes"):
                 for i, new_name in updated_names.items():
                     st.session_state.recognized_faces[i]["name"] = new_name
                 st.success("Attendance sheet updated successfully!")
-                st.rerun()
-            
+                st.experimental_rerun()
             st.markdown("### Add New Entry")
             new_entry_name = st.text_input("New Student Name", key="new_entry")
             if st.button("Add Entry"):
@@ -425,8 +345,7 @@ def main():
                         "image_name": "Manual Entry"
                     })
                     st.success(f"Added new entry: {new_entry_name}")
-                    st.rerun()
-            
+                    st.experimental_rerun()
             if st.button("Export to CSV"):
                 course = st.session_state.get("course_name", "Course")
                 location = st.session_state.get("hall", "Hall")
