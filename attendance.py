@@ -182,7 +182,7 @@ def main():
     # Header with logo and title
     col1, col2 = st.columns([1, 5])
     with col1:
-        st.image("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRVnYQHsVGCaZGazOdtxmDh1QjypY4iixJIPQ&s", width=120)
+        st.image(r"D:\SASUniversityEdition\Machine\MODEL\face_recognition_app\OIP.jpg", width=120)
     with col2:
         st.title("Facial Recognition Attendance System")
         st.markdown("<p style='color:#0066cc'>Record attendance automatically using facial recognition</p>", unsafe_allow_html=True)
