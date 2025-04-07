@@ -7,9 +7,10 @@ import logging
 import tempfile
 from datetime import datetime
 import streamlit as st
+import pandas as pd
 from insightface.app import FaceAnalysis
 import glob
-
+import io
 # Set page config for a clean layout
 st.set_page_config(
     page_title="Attendance System",
@@ -92,6 +93,8 @@ def initialize_session_state():
         st.session_state.training_set_name = ""
     if 'current_tab' not in st.session_state:
         st.session_state.current_tab = "Training"
+    if 'roster_df' not in st.session_state:
+        st.session_state.roster_df = None
 
 # --------------------------
 # CACHED FUNCTION TO LOAD TRAINING DATA FROM Uploaded Files
@@ -115,11 +118,6 @@ def get_training_data_from_uploads(uploaded_files):
                         known_face_names.append(name)
     success = True if known_face_embeddings else False
     return known_face_embeddings, known_face_names, success
-
-# Optionally, allow uploading training images individually (alternative method)
-def load_training_images_from_uploads(uploaded_files):
-    # This function is similar to get_training_data_from_uploads but without caching
-    return get_training_data_from_uploads(uploaded_files)
 
 # Recognize faces in the provided attendance images
 def recognize_faces(uploaded_files, known_face_embeddings, known_face_names):
@@ -170,6 +168,52 @@ def save_recognized_names_to_csv(recognized_names, course_name, hall):
     return csv_data, csv_filename
 
 # --------------------------
+# NEW FUNCTIONALITY: Roster Attendance Update
+def update_roster_attendance():
+    """
+    Update the loaded roster DataFrame by adding a new attendance column.
+    The new column header is generated as "Attendance X <date>" where X is the session number.
+    For each row, if the student code (assumed to be in the "Student Code" column)
+    is in the recognized faces (converted to string), a value of 1 is written; 0 otherwise.
+    """
+    if st.session_state.roster_df is None:
+        st.error("Please upload a roster Excel file first.")
+        return None
+
+    if not st.session_state.recognized_faces:
+        st.error("No recognized attendance data available.")
+        return None
+
+    # Extract recognized codes (as strings) from recognized faces (filtering out "Unknown")
+    recognized_codes = [str(face['name']).strip() for face in st.session_state.recognized_faces if face['name'] != "Unknown"]
+
+    # Determine new attendance session number by counting existing columns that start with "Attendance"
+    attendance_cols = [col for col in st.session_state.roster_df.columns if col.startswith("Attendance")]
+    session_number = len(attendance_cols) + 1
+    # Format current date as M/D/YYYY (e.g., 11/1/2025)
+    if os.name != "nt":
+        current_date = datetime.now().strftime("%-m/%-d/%Y")
+    else:
+        current_date = datetime.now().strftime("%#m/%#d/%Y")
+    new_col_name = f"Attendance {session_number} {current_date}"
+
+    # Check if roster DataFrame has a "Student Code" column
+    if "Student Code" not in st.session_state.roster_df.columns:
+        st.error("The roster file must contain a column named 'Student Code'.")
+        return None
+
+    # Convert the "Student Code" column to string and strip extra spaces
+    st.session_state.roster_df["Student Code"] = st.session_state.roster_df["Student Code"].astype(str).str.strip()
+
+    # Create new attendance column with default value 0 (absent)
+    st.session_state.roster_df[new_col_name] = 0
+    # Set value 1 for each row where the student code is in recognized_codes
+    st.session_state.roster_df.loc[st.session_state.roster_df["Student Code"].isin(recognized_codes), new_col_name] = 1
+
+    st.success(f"Roster updated with new column: {new_col_name}")
+    return new_col_name
+
+# --------------------------
 # MAIN APP
 def main():
     initialize_session_state()
@@ -202,7 +246,6 @@ def main():
         mode = st.radio("Select Option", ["New Training Set", "Load Existing Training Set"])
         
         if mode == "New Training Set":
-            # Instead of a folder path, let the user upload multiple training images.
             uploaded_training_files = st.file_uploader(
                 "Upload training images (JPG, JPEG, PNG)", 
                 type=["jpg", "jpeg", "png"], 
@@ -224,7 +267,7 @@ def main():
                             save_training_data(embeddings, names, pkl_filename)
                             st.success(f"Training set '{training_set_name}' processed and saved!")
                             st.session_state.current_tab = "Take Attendance"
-                            st.rerun()
+                            st.experimental_rerun()
                         else:
                             st.error("No valid images found in the uploads.")
                 else:
@@ -244,7 +287,7 @@ def main():
                         st.session_state.training_set_name = selected_set
                         st.success(f"Loaded training set '{selected_set}'!")
                         st.session_state.current_tab = "Take Attendance"
-                        st.rerun()
+                        st.experimental_rerun()
                     else:
                         st.error("Failed to load training set.")
             else:
@@ -254,7 +297,6 @@ def main():
             st.subheader("Training Results")
             st.write(f"Training Set: {st.session_state.training_set_name}")
             st.write(f"Total trained students: {len(st.session_state.known_face_names)}")
-            import pandas as pd
             unique_names = pd.DataFrame({"Student Name": list(set(st.session_state.known_face_names))})
             st.dataframe(unique_names, width=400)
     
@@ -291,9 +333,8 @@ def main():
                     st.session_state.attendance_processed = True
                     st.success(f"Processed {len(recognized_data)} faces!")
                     st.session_state.current_tab = "Results"
-                    st.rerun()
+                    st.experimental_rerun()
             if st.session_state.recognized_faces:
-                import pandas as pd
                 attendance_data = []
                 for i, face in enumerate(st.session_state.recognized_faces):
                     attendance_data.append({
@@ -321,20 +362,22 @@ def main():
             with col3:
                 unknown_count = len([name for name in recognized_names if name == "Unknown"])
                 st.metric("Unrecognized Faces", unknown_count)
+            
             st.markdown("### Edit Attendance Sheet")
             updated_names = {}
             for i, face in enumerate(st.session_state.recognized_faces):
-                col1, col2 = st.columns([2, 3])
-                with col1:
+                colA, colB = st.columns([2, 3])
+                with colA:
                     st.write(f"Image: {face['image_name']}")
-                with col2:
+                with colB:
                     new_name = st.text_input("Name", value=face["name"], key=f"edit_rec_{i}")
                     updated_names[i] = new_name
             if st.button("Save Changes"):
                 for i, new_name in updated_names.items():
                     st.session_state.recognized_faces[i]["name"] = new_name
                 st.success("Attendance sheet updated successfully!")
-                st.rerun()
+                st.experimental_rerun()
+            
             st.markdown("### Add New Entry")
             new_entry_name = st.text_input("New Student Name", key="new_entry")
             if st.button("Add Entry"):
@@ -345,7 +388,34 @@ def main():
                         "image_name": "Manual Entry"
                     })
                     st.success(f"Added new entry: {new_entry_name}")
-                    st.rerun()
+                    st.experimental_rerun()
+            
+            st.markdown("### Roster Attendance Update")
+            st.write("Upload a roster Excel file with a 'Student Code' column. The system will update attendance based on recognized codes.")
+            uploaded_roster = st.file_uploader("Upload Roster Excel", type=["xlsx"], key="roster_upload")
+            if uploaded_roster is not None:
+                try:
+                    st.session_state.roster_df = pd.read_excel(uploaded_roster)
+                    st.success("Roster loaded successfully!")
+                    st.write("Preview of uploaded roster:")
+                    st.dataframe(st.session_state.roster_df.head())
+                except Exception as e:
+                    st.error(f"Error loading roster: {e}")
+            if st.button("Update Roster Attendance"):
+                new_col = update_roster_attendance()
+                if new_col is not None:
+                    # Convert updated DataFrame to Excel bytes for download
+                    output = io.BytesIO()
+                    st.session_state.roster_df.to_excel(output, index=False, engine='openpyxl')
+                    excel_data = output.getvalue()
+                    st.download_button(
+                        label="Download Updated Roster",
+                        data=excel_data,
+                        file_name=f"Updated_Roster_{st.session_state.training_set_name}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            
+            st.markdown("### Export Attendance to CSV")
             if st.button("Export to CSV"):
                 course = st.session_state.get("course_name", "Course")
                 location = st.session_state.get("hall", "Hall")
