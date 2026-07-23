@@ -5,4 +5,3 @@ cmake
 onnx
 onnxruntime
 opencv-python-headless
-libgl1-mesa-glx
